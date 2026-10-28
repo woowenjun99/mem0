@@ -172,7 +172,7 @@ When the access token expires, exchange the refresh token at `POST /auth/refresh
 
 ### Create and use a per-user API key
 
-Create a key from the dashboard **API Keys** page, or call `POST /api-keys` with a JWT. The full `m0sk_...` value is returned **once** at creation time: store it securely.
+Create a key from the dashboard **API Keys** page, or call `POST /api-keys` with a bearer JWT and JSON containing `label` and the current account `password`. API keys cannot create other API keys. The full `m0sk_...` value is returned **once** at creation time: store it securely.
 
 ```bash
 curl -X POST http://localhost:8888/memories \
@@ -283,19 +283,19 @@ The OSS REST server exposes the following endpoints. None use the `/v1/` prefix.
 | `POST` | `/auth/register` | Register the first admin using `X-Bootstrap-Secret`. Registration closes after the first admin is created. |
 | `POST` | `/auth/login` | Exchange email and password for access and refresh JWTs |
 | `POST` | `/auth/refresh` | Exchange a refresh token for new access and refresh tokens |
-| `POST` | `/auth/logout` | Revoke a refresh token |
+| `POST` | `/auth/logout` | Revoke a refresh-token family and its access tokens |
 | `GET` | `/auth/me` | Get the current authenticated user (JWT required) |
 | `PATCH` | `/auth/me` | Update the caller's name or email. 409 if the new email is already in use |
-| `POST` | `/auth/change-password` | Change the caller's password. 401 if the current password is wrong; new password must be at least 8 characters; existing access and refresh tokens are invalidated |
+| `POST` | `/auth/change-password` | Change the caller's password. 401 if the current password is wrong; new password must be at least 8 characters; existing access and refresh tokens are invalidated and per-user API keys are revoked |
 
 ### API keys
 
-All `/api-keys` endpoints require a JWT.
+Creating an API key requires a bearer JWT and the current account password. Existing per-user keys can still list or revoke keys for their owner.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api-keys` | List the caller's API keys |
-| `POST` | `/api-keys` | Create a new key; the full `m0sk_...` value is returned once |
+| `POST` | `/api-keys` | Create a new key with the account password and a bearer JWT; the full `m0sk_...` value is returned once |
 | `DELETE` | `/api-keys/{id}` | Revoke an API key |
 
 ### Request logs

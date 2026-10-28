@@ -21,7 +21,24 @@ const redirectToLogin = () => {
   }
 };
 
-const refreshAccessToken = async () => {
+let refreshPromise: Promise<string | null> | null = null;
+let sessionQueue: Promise<void> = Promise.resolve();
+
+export function withSessionLock<T>(action: () => Promise<T>): Promise<T> {
+  const operation = sessionQueue.then(async () => {
+    if (typeof navigator !== "undefined" && navigator.locks) {
+      return await navigator.locks.request<Promise<T>>("mem0-session", action);
+    }
+    return action();
+  });
+  sessionQueue = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  return operation;
+}
+
+async function performRefresh() {
   const refreshResponse = await fetch("/api/auth/refresh", {
     method: "POST",
     credentials: "include",
@@ -34,7 +51,16 @@ const refreshAccessToken = async () => {
   const data = await refreshResponse.json();
   setAccessToken(data.access_token);
   return data.access_token as string;
-};
+}
+
+export function refreshAccessToken(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = withSessionLock(performRefresh).finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
 
 const createApi = (): AxiosInstance & {
   postStream: (url: string, data: unknown) => Promise<Response>;

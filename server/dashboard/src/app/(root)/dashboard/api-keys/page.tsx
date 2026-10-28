@@ -30,6 +30,7 @@ import { ApiKey, ApiKeyCreateResponse } from "@/types/api";
 export default function ApiKeysPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [newLabel, setNewLabel] = useState("");
+  const [keyPassword, setKeyPassword] = useState("");
   const [newKey, setNewKey] = useState("");
   const [copied, setCopied] = useState(false);
   const [keyToRevoke, setKeyToRevoke] = useState<ApiKey | null>(null);
@@ -50,7 +51,9 @@ export default function ApiKeysPage() {
     try {
       const res = await api.post<ApiKeyCreateResponse>(API_KEY_ENDPOINTS.BASE, {
         label: newLabel,
+        password: keyPassword,
       });
+      setKeyPassword("");
       setNewKey(res.data.key);
       void refetch();
     } catch (error) {
@@ -82,6 +85,7 @@ export default function ApiKeysPage() {
     if (!open) {
       setNewKey("");
       setNewLabel("");
+      setKeyPassword("");
       setCopied(false);
     }
     setCreateOpen(open);
@@ -152,9 +156,21 @@ export default function ApiKeysPage() {
                     placeholder="e.g. Production"
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="api-key-password">
+                    Confirm your password
+                  </Label>
+                  <Input
+                    id="api-key-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={keyPassword}
+                    onChange={(e) => setKeyPassword(e.target.value)}
+                  />
+                </div>
                 <Button
                   onClick={handleCreate}
-                  disabled={!newLabel}
+                  disabled={!newLabel || !keyPassword}
                   className="w-full"
                 >
                   Create

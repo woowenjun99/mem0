@@ -138,6 +138,10 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1">
+            <p className="text-sm">
+              Changing your password signs out sessions and revokes your
+              per-user API keys.
+            </p>
             <Label htmlFor="settings-current-password" className="text-xs">
               Current password
             </Label>

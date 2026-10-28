@@ -89,6 +89,7 @@ export default function SetupPage() {
   const [initialEmbedderModel, setInitialEmbedderModel] = useState("");
 
   const [apiKey, setApiKey] = useState("");
+  const [keyPassword, setKeyPassword] = useState("");
   const [keyLabel, setKeyLabel] = useState("");
   const [copied, setCopied] = useState(false);
   const [testSuccess, setTestSuccess] = useState(false);
@@ -179,6 +180,8 @@ export default function SetupPage() {
     try {
       await register(name, email, password, bootstrapSecret);
       setBootstrapSecret("");
+      setPassword("");
+      setConfirmPassword("");
       setStep(1);
     } catch (err) {
       setError(getErrorMessage(err, "Registration failed"));
@@ -244,7 +247,9 @@ export default function SetupPage() {
     try {
       const res = await api.post(API_KEY_ENDPOINTS.BASE, {
         label: keyLabel.trim() || "My First Key",
+        password: keyPassword,
       });
+      setKeyPassword("");
       setApiKey(res.data.key);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to create API key"));
@@ -565,7 +570,23 @@ export default function SetupPage() {
                     placeholder="My First Key"
                   />
                 </div>
-                <Button type="submit" disabled={isLoading} className="w-full">
+                <div className="space-y-1">
+                  <Label htmlFor="setup-key-password">
+                    Confirm your password
+                  </Label>
+                  <Input
+                    id="setup-key-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={keyPassword}
+                    onChange={(e) => setKeyPassword(e.target.value)}
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  disabled={isLoading || !keyPassword}
+                  className="w-full"
+                >
                   {isLoading ? "Generating..." : "Generate API Key"}
                 </Button>
               </form>

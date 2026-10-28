@@ -52,10 +52,11 @@ echo "  Logged in."
 
 # Create API key
 echo "Creating API key..."
+KEY_PAYLOAD=$(PASSWORD="$PASSWORD" python3 -c 'import json, os; print(json.dumps({"label": "dev-seed-key", "password": os.environ["PASSWORD"]}))')
 KEY_RESP=$(curl -s -X POST "$API_URL/api-keys" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"label": "dev-seed-key"}')
+  -d "$KEY_PAYLOAD")
 API_KEY=$(echo "$KEY_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['key'])" 2>/dev/null)
 
 if [ -z "$API_KEY" ]; then

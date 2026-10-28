@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from auth import (
-    consume_refresh_jti,
+    rotate_refresh_token,
+    revoke_refresh_session,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -21,7 +22,7 @@ from auth import (
     verify_token_user,
 )
 from db import get_db
-from models import User
+from models import APIKey, User
 from rate_limit import limiter
 from schemas import MessageResponse
 from telemetry import capture_admin_registered, capture_onboarding_completed
@@ -127,10 +128,8 @@ def register(
 
     capture_admin_registered(email=body.email)
 
-    return TokenResponse(
-        access_token=create_access_token(user),
-        refresh_token=create_refresh_token(user, db),
-    )
+    refresh_token, session_id = create_refresh_token(user, db)
+    return TokenResponse(access_token=create_access_token(user, session_id), refresh_token=refresh_token)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -146,10 +145,8 @@ def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
 
-    return TokenResponse(
-        access_token=create_access_token(user),
-        refresh_token=create_refresh_token(user, db),
-    )
+    refresh_token, session_id = create_refresh_token(user, db)
+    return TokenResponse(access_token=create_access_token(user, session_id), refresh_token=refresh_token)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -166,12 +163,8 @@ def refresh(request: Request, body: RefreshRequest, db: Session = Depends(get_db
     user = db.scalar(select(User).where(User.id == uuid.UUID(payload["sub"])).with_for_update())
     user = verify_token_user(payload, user)
 
-    consume_refresh_jti(jti, db)
-
-    return TokenResponse(
-        access_token=create_access_token(user),
-        refresh_token=create_refresh_token(user, db),
-    )
+    refresh_token, session_id = rotate_refresh_token(jti, user, db)
+    return TokenResponse(access_token=create_access_token(user, session_id), refresh_token=refresh_token)
 
 
 @router.post("/logout", response_model=MessageResponse)
@@ -180,7 +173,7 @@ def logout(request: Request, body: RefreshRequest, db: Session = Depends(get_db)
     payload = decode_token(body.refresh_token)
     if payload.get("type") != "refresh" or not payload.get("jti"):
         raise HTTPException(status_code=401, detail="Invalid refresh token.")
-    consume_refresh_jti(payload["jti"], db)
+    revoke_refresh_session(payload["jti"], db)
     return MessageResponse(message="Session logged out.")
 
 
@@ -229,6 +222,11 @@ def change_password(
     _require_password_length(body.new_password)
 
     db_user.password_hash = hash_password(body.new_password)
+    db.execute(
+        update(APIKey)
+        .where(APIKey.created_by == db_user.id, APIKey.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
     db.commit()
     return MessageResponse(message="Password updated.")
 

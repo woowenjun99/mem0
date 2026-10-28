@@ -30,7 +30,7 @@ The self-hosted bundle ships the REST API and a web dashboard together. Configur
 
 ## Configure the environment
 
-Copy `server/.env.example` to `server/.env` and fill in the required values. Existing JWT sessions are signed out after upgrading; API keys remain valid. The server refuses to start if `JWT_SECRET` is unset once auth is enabled.
+Copy `server/.env.example` to `server/.env` and fill in the required values. Existing JWT sessions must sign in again after migration 007. Per-user API keys remain valid until revoked or the account password changes. The server refuses to start if `JWT_SECRET` is unset once auth is enabled.
 
 | Variable | Required | Purpose |
 |---|---|---|

@@ -2,12 +2,13 @@
 
 import os
 import sys
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from auth import hash_password
 from db import SessionLocal
-from models import User
+from models import APIKey, User
 
 MIN_PASSWORD_LENGTH = 8
 
@@ -25,12 +26,17 @@ def main() -> int:
         return 2
 
     with SessionLocal() as db:
-        user = db.scalar(select(User).where(User.email == email))
+        user = db.scalar(select(User).where(User.email == email).with_for_update())
         if user is None:
             print(f"error: no user found with email {email}.", file=sys.stderr)
             return 1
 
         user.password_hash = hash_password(password)
+        db.execute(
+            update(APIKey)
+            .where(APIKey.created_by == user.id, APIKey.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
         db.commit()
 
     print(f"Password reset for {email}.")

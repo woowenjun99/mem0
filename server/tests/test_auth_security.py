@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 import auth
 from db import Base, get_db
 from rate_limit import limiter
+from routers import api_keys as api_keys_router
 from routers import auth as auth_router
 
 
@@ -30,6 +31,7 @@ class AuthSecurityTests(unittest.TestCase):
         app = FastAPI()
         app.state.limiter = limiter
         app.include_router(auth_router.router)
+        app.include_router(api_keys_router.router)
 
         def get_test_db():
             with self.sessions() as db:
@@ -118,6 +120,89 @@ class AuthSecurityTests(unittest.TestCase):
         self.assertEqual(
             self.client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).status_code, 401
         )
+
+    def test_key_creation_requires_password_and_api_keys_cannot_create_keys(self):
+        body = {"name": "Admin", "email": "admin@example.com", "password": "password123"}
+        tokens = self.client.post(
+            "/auth/register", json=body, headers={"X-Bootstrap-Secret": os.environ["BOOTSTRAP_SECRET"]}
+        ).json()
+        headers = {"Authorization": "Bearer " + tokens["access_token"]}
+        self.assertNotEqual(self.client.post("/api-keys", headers=headers, json={"label": "missing"}).status_code, 201)
+        self.assertNotEqual(
+            self.client.post("/api-keys", headers=headers, json={"label": "wrong", "password": "wrong"}).status_code,
+            201,
+        )
+        created = self.client.post("/api-keys", headers=headers, json={"label": "valid", "password": body["password"]})
+        self.assertEqual(created.status_code, 201)
+        key_headers = {"X-API-Key": created.json()["key"]}
+        self.assertNotEqual(
+            self.client.post(
+                "/api-keys", headers=key_headers, json={"label": "attack", "password": body["password"]}
+            ).status_code,
+            201,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/auth/change-password",
+                headers=headers,
+                json={"current_password": body["password"], "new_password": "new-password123"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(self.client.get("/auth/me", headers=key_headers).status_code, 401)
+
+    def test_logout_of_used_refresh_token_revokes_successor(self):
+        body = {"name": "Admin", "email": "admin@example.com", "password": "password123"}
+        tokens = self.client.post(
+            "/auth/register", json=body, headers={"X-Bootstrap-Secret": os.environ["BOOTSTRAP_SECRET"]}
+        ).json()
+        successor = self.client.post("/auth/refresh", json={"refresh_token": tokens["refresh_token"]}).json()
+        self.assertEqual(
+            self.client.post("/auth/logout", json={"refresh_token": tokens["refresh_token"]}).status_code, 200
+        )
+        self.assertEqual(
+            self.client.post("/auth/refresh", json={"refresh_token": successor["refresh_token"]}).status_code, 401
+        )
+        self.assertEqual(
+            self.client.get("/auth/me", headers={"Authorization": "Bearer " + successor["access_token"]}).status_code,
+            401,
+        )
+
+    def test_refresh_replay_revokes_only_its_session_family(self):
+        body = {"name": "Admin", "email": "admin@example.com", "password": "password123"}
+        first = self.client.post(
+            "/auth/register", json=body, headers={"X-Bootstrap-Secret": os.environ["BOOTSTRAP_SECRET"]}
+        ).json()
+        second = self.client.post("/auth/login", json={"email": body["email"], "password": body["password"]}).json()
+        rotated = self.client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]}).json()
+        self.assertEqual(
+            self.client.post("/auth/refresh", json={"refresh_token": first["refresh_token"]}).status_code, 401
+        )
+        self.assertEqual(
+            self.client.post("/auth/refresh", json={"refresh_token": rotated["refresh_token"]}).status_code, 401
+        )
+        self.assertEqual(
+            self.client.post("/auth/refresh", json={"refresh_token": second["refresh_token"]}).status_code, 200
+        )
+
+    def test_password_reset_revokes_api_keys(self):
+        from scripts import reset_admin_password
+
+        body = {"name": "Admin", "email": "admin@example.com", "password": "password123"}
+        tokens = self.client.post(
+            "/auth/register", json=body, headers={"X-Bootstrap-Secret": os.environ["BOOTSTRAP_SECRET"]}
+        ).json()
+        key = self.client.post(
+            "/api-keys",
+            headers={"Authorization": "Bearer " + tokens["access_token"]},
+            json={"label": "test", "password": body["password"]},
+        ).json()["key"]
+        with (
+            patch.object(reset_admin_password, "SessionLocal", self.sessions),
+            patch.dict(os.environ, {"EMAIL": body["email"], "PASSWORD": "replacement-password"}),
+        ):
+            self.assertEqual(reset_admin_password.main(), 0)
+        self.assertEqual(self.client.get("/auth/me", headers={"X-API-Key": key}).status_code, 401)
 
 
 if __name__ == "__main__":

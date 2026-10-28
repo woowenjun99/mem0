@@ -7,7 +7,12 @@ import {
   useMemo,
   useState,
 } from "react";
-import { api, setAccessToken } from "@/utils/api";
+import {
+  api,
+  refreshAccessToken,
+  setAccessToken,
+  withSessionLock,
+} from "@/utils/api";
 import { AUTH_ENDPOINTS } from "@/utils/api-endpoints";
 
 export interface AuthUser {
@@ -52,19 +57,14 @@ async function storeRefreshToken(refreshToken: string) {
 }
 
 async function clearRefreshToken() {
-  const response = await fetch("/api/auth/refresh", { method: "DELETE" });
+  const response = await withSessionLock(() =>
+    fetch("/api/auth/refresh", { method: "DELETE" }),
+  );
   if (!response.ok) throw new Error("Could not revoke session.");
 }
 
 async function refreshSession(): Promise<boolean> {
-  const res = await fetch("/api/auth/refresh", {
-    method: "POST",
-    credentials: "include",
-  });
-  if (!res.ok) return false;
-  const data = await res.json();
-  setAccessToken(data.access_token);
-  return true;
+  return (await refreshAccessToken()) !== null;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

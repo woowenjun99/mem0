@@ -77,7 +77,7 @@ export async function DELETE() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
-    if (!res.ok && res.status !== 401) {
+    if (!res.ok) {
       return NextResponse.json(
         { error: "Could not revoke session" },
         { status: 502 },

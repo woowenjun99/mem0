@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { RootState } from "@/store/store";
 import { toggleSidebar } from "@/store/reducers/layoutReducer";
 import { useAuth } from "@/hooks/use-auth";
+import { toast } from "@/components/ui/use-toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -120,7 +121,16 @@ export default function NavWrapper() {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className="bg-memBorder-primary" />
                   <DropdownMenuItem
-                    onClick={logout}
+                    onClick={() => {
+                      void logout().catch(() =>
+                        toast({
+                          title: "Could not log out",
+                          description:
+                            "Your session could not be revoked. Please try again.",
+                          variant: "destructive",
+                        }),
+                      );
+                    }}
                     className="typo-body-sm text-onSurface-default-primary hover:bg-surface-default-tertiary-hover focus:bg-surface-default-tertiary-hover cursor-pointer"
                   >
                     <LogOut className="size-4 mr-2" />

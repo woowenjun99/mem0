@@ -9,9 +9,9 @@ from db import SessionLocal
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from models import APIKey, RefreshTokenJti, User
+from models import APIKey, RefreshSession, RefreshTokenJti, User
 from passlib.context import CryptContext
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -66,11 +66,12 @@ def verify_token_user(payload: dict, user: User | None) -> User:
     return user
 
 
-def create_access_token(user: User) -> str:
+def create_access_token(user: User, session_id: uuid.UUID) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(user.id),
         "role": user.role,
+        "sid": str(session_id),
         "exp": expire,
         "type": "access",
         "credential_version": _credential_version(user),
@@ -78,11 +79,13 @@ def create_access_token(user: User) -> str:
     return jwt.encode(payload, _get_secret(), algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user: User, db: Session) -> str:
+def create_refresh_token(user: User, db: Session, session: RefreshSession | None = None) -> tuple[str, uuid.UUID]:
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    if session is None:
+        session = RefreshSession(id=uuid.uuid4(), user_id=user.id)
+        db.add(session)
     jti = uuid.uuid4()
-    db.add(RefreshTokenJti(jti=jti, user_id=user.id, expires_at=expire))
-    db.commit()
+    db.add(RefreshTokenJti(jti=jti, user_id=user.id, session_id=session.id, expires_at=expire))
     payload = {
         "sub": str(user.id),
         "exp": expire,
@@ -90,32 +93,46 @@ def create_refresh_token(user: User, db: Session) -> str:
         "type": "refresh",
         "credential_version": _credential_version(user),
     }
-    return jwt.encode(payload, _get_secret(), algorithm=JWT_ALGORITHM)
+    token = jwt.encode(payload, _get_secret(), algorithm=JWT_ALGORITHM)
+    db.commit()
+    return token, session.id
 
 
-def consume_refresh_jti(jti: str, db: Session) -> None:
-    """Atomically mark a refresh token's jti as used. Raises 401 if missing, already used, or expired.
-
-    The conditional UPDATE closes the read-check-write race: concurrent replays of the same
-    token race on a single row, so at most one update affects a row and the rest see rowcount 0.
-    """
+def lock_refresh_session(jti: str, db: Session) -> tuple[RefreshTokenJti, RefreshSession]:
     try:
         jti_uuid = uuid.UUID(jti)
     except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="Refresh token is no longer valid.")
-    now = datetime.now(timezone.utc)
-    result = db.execute(
-        update(RefreshTokenJti)
-        .where(
-            RefreshTokenJti.jti == jti_uuid,
-            RefreshTokenJti.used_at.is_(None),
-            RefreshTokenJti.expires_at > now,
-        )
-        .values(used_at=now)
-    )
-    if result.rowcount == 0:
+    token = db.get(RefreshTokenJti, jti_uuid)
+    if token is None or token.session_id is None:
         raise HTTPException(status_code=401, detail="Refresh token is no longer valid.")
-    db.commit()
+    session = db.scalar(select(RefreshSession).where(RefreshSession.id == token.session_id).with_for_update())
+    if session is None:
+        raise HTTPException(status_code=401, detail="Refresh token is no longer valid.")
+    # Re-read after acquiring the family lock: another rotation may have consumed it.
+    db.refresh(token)
+    return token, session
+
+
+def rotate_refresh_token(jti: str, user: User, db: Session) -> tuple[str, uuid.UUID]:
+    token, session = lock_refresh_session(jti, db)
+    now = datetime.now(timezone.utc)
+    if session.user_id != user.id or token.user_id != user.id or session.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Refresh token is no longer valid.")
+    if token.used_at is not None:
+        session.revoked_at = now
+        db.commit()
+        raise HTTPException(status_code=401, detail="Refresh token reuse detected.")
+    # Token expiry is verified from the signed JWT by decode_token.
+    token.used_at = now
+    return create_refresh_token(user, db, session)
+
+
+def revoke_refresh_session(jti: str, db: Session) -> None:
+    token, session = lock_refresh_session(jti, db)
+    if session.revoked_at is None:
+        session.revoked_at = datetime.now(timezone.utc)
+        db.commit()
 
 
 def decode_token(token: str) -> dict:
@@ -141,8 +158,16 @@ def _resolve_user_from_jwt(token: str, db: Session) -> User:
     payload = decode_token(token)
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Invalid token type.")
-    user = db.get(User, uuid.UUID(payload["sub"]))
-    return verify_token_user(payload, user)
+    try:
+        user_id = uuid.UUID(payload["sub"])
+        session_id = uuid.UUID(payload["sid"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Session is no longer valid.")
+    user = verify_token_user(payload, db.get(User, user_id))
+    session = db.get(RefreshSession, session_id)
+    if session is None or session.user_id != user.id or session.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="Session is no longer valid.")
+    return user
 
 
 def _resolve_user_from_api_key(key: str, db: Session) -> User:

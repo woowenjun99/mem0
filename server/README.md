@@ -72,8 +72,8 @@ Then open `http://localhost:3000` and complete the setup wizard using the bootst
 
 ## Security Defaults
 
-- Dashboard login uses JWTs. Upgrading to this version signs out existing JWT sessions; API keys remain valid.
-- Logging out revokes the refresh token. Already-issued access tokens remain valid for up to 30 minutes; changing the password invalidates them immediately.
+- Dashboard login uses JWTs. Migration 007 signs out existing JWT sessions; API keys remain valid until revoked or the password changes.
+- Logging out revokes the refresh-token family and its access tokens.
 - Programmatic access uses `X-API-Key`.
 - Auth is enabled by default.
 - `AUTH_DISABLED=true` exists for local development only and should not be used in production.
@@ -87,7 +87,7 @@ cd server
 make reset-admin-password EMAIL=admin@example.com PASSWORD='new-strong-password'
 ```
 
-Password reset invalidates existing access and refresh tokens; API keys are unaffected. This is the supported recovery path. Anyone with shell access to the host already has full access to the database and secrets, so this command does not expand the attack surface.
+Password reset invalidates existing access and refresh tokens and revokes all per-user API keys. The legacy `ADMIN_API_KEY` is unaffected and must be rotated separately. This is the supported recovery path. Anyone with shell access to the host already has full access to the database and secrets, so this command does not expand the attack surface.
 
 ## Request log retention
 

@@ -1,14 +1,15 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from auth import generate_api_key, require_auth
+from auth import generate_api_key, require_auth, verify_password
 from db import get_db
 from models import APIKey, User
+from rate_limit import limiter
 from schemas import MessageResponse
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
 class CreateKeyRequest(BaseModel):
     label: str
+    password: str
 
 
 class CreateKeyResponse(BaseModel):
@@ -60,7 +62,15 @@ def list_keys(user: User = Depends(require_auth), db: Session = Depends(get_db))
 
 
 @router.post("", response_model=CreateKeyResponse, status_code=201)
-def create_key(body: CreateKeyRequest, user: User = Depends(require_auth), db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def create_key(
+    request: Request, body: CreateKeyRequest, user: User = Depends(require_auth), db: Session = Depends(get_db)
+):
+    if getattr(request.state, "auth_type", "none") != "bearer":
+        raise HTTPException(status_code=403, detail="A password-confirmed session is required.")
+    db_user = db.scalar(select(User).where(User.id == user.id).with_for_update())
+    if db_user is None or not verify_password(body.password, db_user.password_hash):
+        raise HTTPException(status_code=403, detail="Password is incorrect.")
     full_key, prefix, key_hash = generate_api_key()
     api_key = APIKey(key_prefix=prefix, key_hash=key_hash, label=body.label, created_by=user.id)
     db.add(api_key)
