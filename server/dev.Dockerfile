@@ -10,13 +10,11 @@ ENV PATH="/root/.local/bin:$PATH"
 COPY server/requirements.txt .
 RUN pip install -r requirements.txt
 
-# Install mem0 in editable mode using Poetry
-WORKDIR /app/packages
-COPY pyproject.toml .
-COPY poetry.lock .
-COPY README.md .
+# Keep the editable SDK outside /app, which Compose bind-mounts.
+WORKDIR /opt/mem0
+COPY pyproject.toml README.md LICENSE ./
 COPY mem0 ./mem0
-RUN pip install -e .[graph]
+RUN pip install -e .
 
 # Return to app directory and copy server code
 WORKDIR /app

@@ -56,8 +56,14 @@ class LLMBase(ABC):
             return explicit
 
         reasoning_models = {
-            "o1", "o1-preview", "o3-mini", "o3",
-            "gpt-5", "gpt-5o", "gpt-5o-mini", "gpt-5o-micro",
+            "o1",
+            "o1-preview",
+            "o3-mini",
+            "o3",
+            "gpt-5",
+            "gpt-5o",
+            "gpt-5o-mini",
+            "gpt-5o-micro",
         }
 
         model_lower = model.lower()
@@ -65,6 +71,12 @@ class LLMBase(ABC):
         base_model = model_lower.rsplit("/", 1)[-1]
 
         if base_model in reasoning_models:
+            return True
+
+        if any(
+            base_model == name or base_model.startswith(name + "-")
+            for name in ("gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol")
+        ):
             return True
 
         # Match o1/o3 family with prefixes (o1-2024-12-17, o3-2025-04-16)
@@ -97,18 +109,18 @@ class LLMBase(ABC):
         """
         Get parameters that are supported by the current model.
         Filters out unsupported parameters for reasoning models and GPT-5 series.
-        
+
         Args:
             **kwargs: Additional parameters to include
-            
+
         Returns:
             Dict: Filtered parameters dictionary
         """
-        model = getattr(self.config, 'model', '')
-        
+        model = getattr(self.config, "model", "")
+
         if self._is_reasoning_model(model):
             supported_params = {}
-            
+
             if "messages" in kwargs:
                 supported_params["messages"] = kwargs["messages"]
             if "response_format" in kwargs:
@@ -119,7 +131,7 @@ class LLMBase(ABC):
                 supported_params["tool_choice"] = kwargs["tool_choice"]
 
             # Add reasoning_effort if configured
-            reasoning_effort = getattr(self.config, 'reasoning_effort', None)
+            reasoning_effort = getattr(self.config, "reasoning_effort", None)
             if reasoning_effort:
                 supported_params["reasoning_effort"] = reasoning_effort
 

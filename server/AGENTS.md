@@ -6,7 +6,7 @@ FastAPI REST server wrapping the Python SDK. Docker only; there is no local non-
 
 ```bash
 # Production image
-make build        # docker build -t mem0-api-server .
+make build        # docker build -f Dockerfile -t mem0-api-server ..
 make run_local    # docker run -p 8000:8000 with .env
 
 # Development stack (FastAPI + PostgreSQL/pgvector + Neo4j)

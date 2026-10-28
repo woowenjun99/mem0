@@ -29,9 +29,9 @@ class OpenAILLM(LLMBase):
                 top_k=config.top_k,
                 enable_vision=config.enable_vision,
                 vision_details=config.vision_details,
-                reasoning_effort=getattr(config, 'reasoning_effort', None),
+                reasoning_effort=getattr(config, "reasoning_effort", None),
                 http_client_proxies=config.http_client_proxies,
-                is_reasoning_model=getattr(config, 'is_reasoning_model', None),
+                is_reasoning_model=getattr(config, "is_reasoning_model", None),
             )
 
         super().__init__(config)
@@ -82,6 +82,59 @@ class OpenAILLM(LLMBase):
         else:
             return response.choices[0].message.content
 
+    def _generate_responses_with_tools(self, messages, response_format, tools, tool_choice, kwargs):
+        # Responses and Chat Completions use different function schemas.
+        if kwargs:
+            raise ValueError("GPT-6.1 tool calls do not support additional Chat Completions parameters")
+        if any(tool.get("type") != "function" for tool in tools):
+            raise ValueError("GPT-6.1 tool calls support function tools only")
+        if any(
+            not isinstance(message.get("content"), str) or message.get("role") not in {"system", "user", "assistant"}
+            for message in messages
+        ):
+            raise ValueError("GPT-6.1 tool calls currently require text-only messages")
+        converted_tools = []
+        for tool in tools:
+            function = dict(tool["function"])
+            function.setdefault("strict", False)
+            converted_tools.append({"type": "function", **function})
+        params = {
+            "model": self.config.model,
+            "input": messages,
+            "tools": converted_tools,
+            "tool_choice": tool_choice,
+            "max_output_tokens": self.config.max_tokens,
+            "store": self.config.store if self.config.store is not None else False,
+        }
+        if isinstance(tool_choice, dict):
+            params["tool_choice"] = {"type": "function", "name": tool_choice["function"]["name"]}
+        if self.config.reasoning_effort:
+            params["reasoning"] = {"effort": self.config.reasoning_effort}
+        if response_format:
+            if response_format.get("type") == "json_schema":
+                params["text"] = {"format": {"type": "json_schema", **response_format["json_schema"]}}
+            else:
+                params["text"] = {"format": response_format}
+        response = self.client.responses.create(**params)
+        if getattr(response, "status", None) in {"incomplete", "failed"}:
+            raise RuntimeError(f"OpenAI response was {response.status}")
+        if any(part.type == "refusal" for item in response.output if item.type == "message" for part in item.content):
+            raise RuntimeError("OpenAI refused the tool request")
+        parsed = {
+            "content": response.output_text or None,
+            "tool_calls": [
+                {"name": item.name, "arguments": json.loads(extract_json(item.arguments))}
+                for item in response.output
+                if item.type == "function_call"
+            ],
+        }
+        if self.config.response_callback:
+            try:
+                self.config.response_callback(self, response, params)
+            except Exception as e:
+                logging.error(f"Error due to callback: {e}")
+        return parsed
+
     def generate_response(
         self,
         messages: List[Dict[str, str]],
@@ -103,12 +156,26 @@ class OpenAILLM(LLMBase):
         Returns:
             json: The generated response.
         """
+        model_name = self.config.model.lower().rsplit("/", 1)[-1]
+        gpt61_tool_model = any(
+            model_name == name or model_name.startswith(name + "-") for name in ("gpt-6.1-sol", "gpt-6.1-terra")
+        )
+        if tools and gpt61_tool_model:
+            return self._generate_responses_with_tools(messages, response_format, tools, tool_choice, kwargs)
+
         params = self._get_supported_params(messages=messages, **kwargs)
-        
-        params.update({
-            "model": self.config.model,
-            "messages": messages,
-        })
+        if model_name == "gpt-6-luna" or model_name.startswith("gpt-6-luna-"):
+            if tools and self.config.reasoning_effort not in (None, "none"):
+                raise ValueError("GPT-6 Luna function calls require reasoning_effort='none'")
+            if not self.config.reasoning_effort:
+                params["reasoning_effort"] = "none"
+
+        params.update(
+            {
+                "model": self.config.model,
+                "messages": messages,
+            }
+        )
 
         if os.getenv("OPENROUTER_API_KEY"):
             openrouter_params = {}
@@ -125,7 +192,7 @@ class OpenAILLM(LLMBase):
                 openrouter_params["extra_headers"] = extra_headers
 
             params.update(**openrouter_params)
-        
+
         else:
             # Only send OpenAI-specific parameters when the user has explicitly
             # configured them. OpenAI-compatible backends (Gemini, Groq, vLLM, etc.)

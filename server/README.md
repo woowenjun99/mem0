@@ -275,3 +275,9 @@ Then `docker compose down -v`, `docker compose up -d --build`, and restore from
 ## Reference
 
 Additional product and API documentation lives at [docs.mem0.ai](https://docs.mem0.ai/open-source/overview).
+
+## OpenAI GPT-6 models
+
+Set `MEM0_DEFAULT_LLM_MODEL` to `gpt-6-luna`, `gpt-6.1-terra`, or `gpt-6.1-sol` to select the memory extraction model. The embedding model is configured separately. Existing `/configure` overrides take precedence over this environment default.
+
+For the server Docker image, build with the repository root as the build context: `docker build -f server/Dockerfile -t mem0-api-server .`. On Railway, set the API service root directory to `/` and Dockerfile path to `server/Dockerfile`; the image installs the SDK from the same checkout. Deploy the updated image before selecting a GPT-6 model. GPT-6.1 function tools use the Responses API; this path accepts text-only messages and function tools.
