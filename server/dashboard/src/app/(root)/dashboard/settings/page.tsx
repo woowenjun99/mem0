@@ -75,7 +75,11 @@ export default function SettingsPage() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      toast({ title: "Password updated", variant: "success" });
+      toast({
+        title: "Password updated. Please sign in again.",
+        variant: "success",
+      });
+      window.location.href = "/login";
     } catch (error) {
       toast({
         title: "Failed to update password",

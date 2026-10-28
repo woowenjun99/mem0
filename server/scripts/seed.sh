@@ -18,9 +18,15 @@ NEEDS_SETUP=$(echo "$SETUP" | python3 -c "import sys,json; print(json.load(sys.s
 
 if [ "$NEEDS_SETUP" = "True" ]; then
   echo "Creating admin account..."
+  BOOTSTRAP_SECRET="$(docker compose exec -T mem0 printenv BOOTSTRAP_SECRET || true)"
+  if [ -z "$BOOTSTRAP_SECRET" ]; then
+    echo "  Set BOOTSTRAP_SECRET in server/.env and recreate the server."
+    exit 1
+  fi
   REGISTER_PAYLOAD=$(NAME="$NAME" EMAIL="$EMAIL" PASSWORD="$PASSWORD" python3 -c 'import json, os; print(json.dumps({"name": os.environ["NAME"], "email": os.environ["EMAIL"], "password": os.environ["PASSWORD"]}))')
   REGISTER=$(curl -s -X POST "$API_URL/auth/register" \
     -H "Content-Type: application/json" \
+    -H "X-Bootstrap-Secret: $BOOTSTRAP_SECRET" \
     -d "$REGISTER_PAYLOAD")
   echo "$REGISTER" | python3 -c "import sys,json; d=json.load(sys.stdin); print('  Admin created.' if 'access_token' in d else f'  Error: {d}')" 2>/dev/null
 else

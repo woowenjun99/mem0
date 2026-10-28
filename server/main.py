@@ -78,7 +78,7 @@ def _warn_if_unconfigured() -> None:
         "  Auth is enabled by default and this server has no admin configured.\n"
         "  Protected endpoints will return 401 until you either:\n"
         "    1. Set ADMIN_API_KEY=<long-random-value>  (fastest, no client changes)\n"
-        "    2. Register an admin at http://<host>:3000/setup\n"
+        "    2. Set BOOTSTRAP_SECRET and register an admin at http://<host>:3000/setup\n"
         "    3. Set AUTH_DISABLED=true                 (local development only)\n"
         "  Docs: https://docs.mem0.ai/open-source/features/rest-api#authentication\n"
         "%s",

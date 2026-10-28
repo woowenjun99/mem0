@@ -30,12 +30,13 @@ The self-hosted bundle ships the REST API and a web dashboard together. Configur
 
 ## Configure the environment
 
-Copy `server/.env.example` to `server/.env` and fill in the required values. The server refuses to start if `JWT_SECRET` is unset once auth is enabled.
+Copy `server/.env.example` to `server/.env` and fill in the required values. Existing JWT sessions are signed out after upgrading; API keys remain valid. The server refuses to start if `JWT_SECRET` is unset once auth is enabled.
 
 | Variable | Required | Purpose |
 |---|---|---|
 | `OPENAI_API_KEY` | Yes | Default LLM and embedder provider. |
-| `JWT_SECRET` | Yes | Signs access and refresh tokens. Use a long random value. A missing secret causes auth endpoints to return `500`. |
+| `JWT_SECRET` | Yes | Signs access and refresh tokens. Use a long random value. |
+| `BOOTSTRAP_SECRET` | For first admin registration | A random secret of at least 32 characters, required by the setup wizard and registration API. Generate with `openssl rand -hex 32`. |
 | `ADMIN_API_KEY` | Optional | Legacy shared admin key. Kept for back-compat; prefer per-user keys for new setups. |
 | `AUTH_DISABLED` | Optional | `true` turns off auth for local development only. Never enable in production. |
 | `DASHBOARD_URL` | Optional | Origin the API accepts for CORS. Defaults to `http://localhost:3000`. Set this when you front the dashboard on a custom domain. |
@@ -95,7 +96,7 @@ Because `make bootstrap` already creates the admin, the setup wizard is skipped.
 
 On a fresh install the dashboard redirects to `/setup`. Each step submits on Enter.
 
-**1. Create the admin account.** Name, email, password. This account becomes the first admin. Registration closes after the first admin is created; additional accounts are provisioned by the existing admin.
+**1. Create the admin account.** Enter the bootstrap secret from `server/.env`, name, email, and password. This account becomes the first admin. Registration closes after the first admin is created.
 
 **2. Review the effective config.** Read-only display of the LLM and embedder the server is running with, sourced from your environment. If anything is wrong here, stop the stack, fix the `.env`, and restart. The dashboard intentionally does not let you change provider secrets at runtime.
 

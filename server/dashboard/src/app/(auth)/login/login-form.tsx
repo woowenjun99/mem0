@@ -140,8 +140,7 @@ export default function LoginForm() {
                   <DialogTitle>Reset your admin password</DialogTitle>
                   <DialogDescription>
                     Run this command on the server host. It overwrites the
-                    existing password; anyone already signed in stays signed in
-                    until their session expires.
+                    existing password and signs out existing dashboard sessions.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="flex gap-2">

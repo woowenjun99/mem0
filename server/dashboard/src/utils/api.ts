@@ -59,7 +59,10 @@ const createApi = (): AxiosInstance & {
   api.interceptors.response.use(
     (response) => response,
     async (error: AxiosError<{ error?: string }>) => {
-      if (error.response?.status === 401) {
+      if (
+        error.response?.status === 401 &&
+        !["/auth/login", "/auth/register"].includes(error.config?.url ?? "")
+      ) {
         handleTokenError();
 
         try {

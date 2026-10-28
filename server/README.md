@@ -17,7 +17,7 @@ Copy the example env file and set a Postgres password (required):
 ```bash
 cd server
 cp .env.example .env
-# Edit .env — at minimum set POSTGRES_PASSWORD and OPENAI_API_KEY
+# Edit .env — at minimum set POSTGRES_PASSWORD, JWT_SECRET, BOOTSTRAP_SECRET, and OPENAI_API_KEY
 ```
 
 ### Agent-first
@@ -29,7 +29,7 @@ cd server
 make bootstrap
 ```
 
-This starts the stack, waits for the API and dashboard to be ready, creates the first admin, and generates the first API key.
+Set `BOOTSTRAP_SECRET` in `server/.env` to a random value of at least 32 characters (generate one with `openssl rand -hex 32`). This starts the stack, waits for the API and dashboard to be ready, creates the first admin, and generates the first API key.
 
 > The generated credentials print once in the `=== Ready ===` block. Save the password and API key before closing the terminal — the API key cannot be recovered afterwards.
 
@@ -68,11 +68,12 @@ cd server
 make up
 ```
 
-Then open `http://localhost:3000` and complete the setup wizard.
+Then open `http://localhost:3000` and complete the setup wizard using the bootstrap secret from `server/.env`.
 
 ## Security Defaults
 
-- Dashboard login uses JWTs.
+- Dashboard login uses JWTs. Upgrading to this version signs out existing JWT sessions; API keys remain valid.
+- Logging out revokes the refresh token. Already-issued access tokens remain valid for up to 30 minutes; changing the password invalidates them immediately.
 - Programmatic access uses `X-API-Key`.
 - Auth is enabled by default.
 - `AUTH_DISABLED=true` exists for local development only and should not be used in production.
@@ -86,7 +87,7 @@ cd server
 make reset-admin-password EMAIL=admin@example.com PASSWORD='new-strong-password'
 ```
 
-This is the supported recovery path. Anyone with shell access to the host already has full access to the database and secrets, so this command does not expand the attack surface.
+Password reset invalidates existing access and refresh tokens; API keys are unaffected. This is the supported recovery path. Anyone with shell access to the host already has full access to the database and secrets, so this command does not expand the attack surface.
 
 ## Request log retention
 

@@ -70,6 +70,7 @@ export default function SetupPage() {
   const [isPrefillingConfig, setIsPrefillingConfig] = useState(false);
   const [error, setError] = useState("");
 
+  const [bootstrapSecret, setBootstrapSecret] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -176,7 +177,8 @@ export default function SetupPage() {
     setIsLoading(true);
 
     try {
-      await register(name, email, password);
+      await register(name, email, password, bootstrapSecret);
+      setBootstrapSecret("");
       setStep(1);
     } catch (err) {
       setError(getErrorMessage(err, "Registration failed"));
@@ -353,6 +355,21 @@ export default function SetupPage() {
             {step === 0 && (
               <form onSubmit={handleStep1} className="space-y-4">
                 <div className="space-y-1">
+                  <Label htmlFor="setup-bootstrap-secret">
+                    Bootstrap secret
+                  </Label>
+                  <Input
+                    id="setup-bootstrap-secret"
+                    type="password"
+                    autoComplete="off"
+                    value={bootstrapSecret}
+                    onChange={(e) => setBootstrapSecret(e.target.value)}
+                  />
+                  <p className="text-xs">
+                    Enter BOOTSTRAP_SECRET from the server environment.
+                  </p>
+                </div>
+                <div className="space-y-1">
                   <Label htmlFor="setup-name">Name</Label>
                   <Input
                     id="setup-name"
@@ -394,7 +411,13 @@ export default function SetupPage() {
                 </div>
                 <Button
                   type="submit"
-                  disabled={isLoading || !name || !email || !password}
+                  disabled={
+                    isLoading ||
+                    !name ||
+                    !email ||
+                    !password ||
+                    !bootstrapSecret
+                  }
                   className="w-full"
                 >
                   {isLoading ? "Creating..." : "Create Admin Account"}

@@ -23,7 +23,12 @@ interface AuthContextValue {
   isLoading: boolean;
   isAdmin: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (
+    name: string,
+    email: string,
+    password: string,
+    bootstrapSecret: string,
+  ) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -47,7 +52,8 @@ async function storeRefreshToken(refreshToken: string) {
 }
 
 async function clearRefreshToken() {
-  await fetch("/api/auth/refresh", { method: "DELETE" });
+  const response = await fetch("/api/auth/refresh", { method: "DELETE" });
+  if (!response.ok) throw new Error("Could not revoke session.");
 }
 
 async function refreshSession(): Promise<boolean> {
@@ -98,12 +104,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const register = useCallback(
-    async (name: string, email: string, password: string) => {
-      const res = await api.post(AUTH_ENDPOINTS.REGISTER, {
-        name,
-        email,
-        password,
-      });
+    async (
+      name: string,
+      email: string,
+      password: string,
+      bootstrapSecret: string,
+    ) => {
+      const res = await api.post(
+        AUTH_ENDPOINTS.REGISTER,
+        {
+          name,
+          email,
+          password,
+        },
+        { headers: { "X-Bootstrap-Secret": bootstrapSecret } },
+      );
       setAccessToken(res.data.access_token);
       await storeRefreshToken(res.data.refresh_token);
       await loadUser();

@@ -70,6 +70,20 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE() {
   const cookieStore = await cookies();
+  const refreshToken = cookieStore.get(COOKIE_NAME)?.value;
+  if (refreshToken) {
+    const res = await fetch(`${getServerApiUrl()}${AUTH_ENDPOINTS.LOGOUT}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok && res.status !== 401) {
+      return NextResponse.json(
+        { error: "Could not revoke session" },
+        { status: 502 },
+      );
+    }
+  }
   cookieStore.delete(COOKIE_NAME);
   return NextResponse.json({ ok: true });
 }

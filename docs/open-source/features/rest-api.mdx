@@ -47,6 +47,7 @@ The Mem0 REST API server exposes every OSS memory operation over HTTP. Run it al
     ```bash
     OPENAI_API_KEY=your-openai-api-key
     JWT_SECRET=$(openssl rand -base64 48)
+    BOOTSTRAP_SECRET=$(openssl rand -hex 32)
     ```
 
 2. Bootstrap the stack in one command:
@@ -84,7 +85,7 @@ docker build -t mem0-api-server .
       </Tab>
     </Tabs>
 
-    1. Create a `.env` file with `OPENAI_API_KEY` and `JWT_SECRET`.
+    1. Create a `.env` file with `OPENAI_API_KEY`, `JWT_SECRET`, and `BOOTSTRAP_SECRET`.
     2. Run the container:
 
     ```bash
@@ -139,11 +140,12 @@ The `/docs` OpenAPI explorer supports both auth modes. Click **Authorize** at th
 
 ### Log in and use a JWT
 
-Register the first admin (only works when no user exists yet), then log in:
+Set `BOOTSTRAP_SECRET` to the configured server value and register the first admin (only works when no user exists yet), then log in:
 
 ```bash
-# First admin only: returns 403 after the first admin is registered
+# First admin only: set BOOTSTRAP_SECRET to the value configured on the server
 curl -X POST http://localhost:8888/auth/register \
+  -H "X-Bootstrap-Secret: $BOOTSTRAP_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"name": "Admin", "email": "admin@example.com", "password": "strong-password"}'
 ```
@@ -278,12 +280,13 @@ The OSS REST server exposes the following endpoints. None use the `/v1/` prefix.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/auth/setup-status` | Returns `{needsSetup: bool}`. Open, no auth required |
-| `POST` | `/auth/register` | Register the first admin. Registration closes after the first admin is created; additional accounts are provisioned by the existing admin. |
+| `POST` | `/auth/register` | Register the first admin using `X-Bootstrap-Secret`. Registration closes after the first admin is created. |
 | `POST` | `/auth/login` | Exchange email and password for access and refresh JWTs |
-| `POST` | `/auth/refresh` | Exchange a refresh token for a new access token |
+| `POST` | `/auth/refresh` | Exchange a refresh token for new access and refresh tokens |
+| `POST` | `/auth/logout` | Revoke a refresh token |
 | `GET` | `/auth/me` | Get the current authenticated user (JWT required) |
 | `PATCH` | `/auth/me` | Update the caller's name or email. 409 if the new email is already in use |
-| `POST` | `/auth/change-password` | Change the caller's password. 401 if the current password is wrong; new password must be at least 8 characters |
+| `POST` | `/auth/change-password` | Change the caller's password. 401 if the current password is wrong; new password must be at least 8 characters; existing access and refresh tokens are invalidated |
 
 ### API keys
 

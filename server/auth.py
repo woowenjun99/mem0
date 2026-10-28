@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import os
 import secrets
 import uuid
@@ -54,18 +56,40 @@ def _get_secret() -> str:
     return JWT_SECRET
 
 
-def create_access_token(user_id: str, role: str) -> str:
+def _credential_version(user: User) -> str:
+    return hmac.new(_get_secret().encode(), user.password_hash.encode(), hashlib.sha256).hexdigest()
+
+
+def verify_token_user(payload: dict, user: User | None) -> User:
+    if user is None or not hmac.compare_digest(payload.get("credential_version", ""), _credential_version(user)):
+        raise HTTPException(status_code=401, detail="Session is no longer valid.")
+    return user
+
+
+def create_access_token(user: User) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": user_id, "role": role, "exp": expire, "type": "access"}
+    payload = {
+        "sub": str(user.id),
+        "role": user.role,
+        "exp": expire,
+        "type": "access",
+        "credential_version": _credential_version(user),
+    }
     return jwt.encode(payload, _get_secret(), algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: str, db: Session) -> str:
+def create_refresh_token(user: User, db: Session) -> str:
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     jti = uuid.uuid4()
-    db.add(RefreshTokenJti(jti=jti, user_id=uuid.UUID(user_id), expires_at=expire))
+    db.add(RefreshTokenJti(jti=jti, user_id=user.id, expires_at=expire))
     db.commit()
-    payload = {"sub": user_id, "exp": expire, "jti": str(jti), "type": "refresh"}
+    payload = {
+        "sub": str(user.id),
+        "exp": expire,
+        "jti": str(jti),
+        "type": "refresh",
+        "credential_version": _credential_version(user),
+    }
     return jwt.encode(payload, _get_secret(), algorithm=JWT_ALGORITHM)
 
 
@@ -117,10 +141,8 @@ def _resolve_user_from_jwt(token: str, db: Session) -> User:
     payload = decode_token(token)
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Invalid token type.")
-    user = db.get(User, payload.get("sub"))
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found.")
-    return user
+    user = db.get(User, uuid.UUID(payload["sub"]))
+    return verify_token_user(payload, user)
 
 
 def _resolve_user_from_api_key(key: str, db: Session) -> User:
@@ -191,7 +213,12 @@ async def require_auth(
 
 
 _BOOTSTRAP_ADMIN = User(
-    id=uuid.UUID(int=0), name="admin_api_key", email="", password_hash="", role="admin", created_at=datetime.min.replace(tzinfo=timezone.utc),
+    id=uuid.UUID(int=0),
+    name="admin_api_key",
+    email="",
+    password_hash="",
+    role="admin",
+    created_at=datetime.min.replace(tzinfo=timezone.utc),
 )
 
 

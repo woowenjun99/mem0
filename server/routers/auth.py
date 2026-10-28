@@ -1,7 +1,9 @@
+import os
+import secrets
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +18,7 @@ from auth import (
     hash_password,
     require_auth,
     verify_password,
+    verify_token_user,
 )
 from db import get_db
 from models import User
@@ -93,8 +96,16 @@ def setup_status(db: Session = Depends(get_db)):
 
 @router.post("/register", response_model=TokenResponse)
 @limiter.limit("5/minute")
-def register(request: Request, body: RegisterRequest, db: Session = Depends(get_db)):
+def register(
+    request: Request,
+    body: RegisterRequest,
+    db: Session = Depends(get_db),
+    bootstrap_secret: str | None = Header(default=None, alias="X-Bootstrap-Secret"),
+):
     """Create the first admin account. Blocked once any user exists."""
+    expected = os.environ.get("BOOTSTRAP_SECRET", "")
+    if len(expected) < 32 or not bootstrap_secret or not secrets.compare_digest(bootstrap_secret, expected):
+        raise HTTPException(status_code=401, detail="A valid bootstrap secret is required.")
     _require_password_length(body.password)
 
     if db.scalar(select(func.count(User.id))) > 0:
@@ -117,15 +128,15 @@ def register(request: Request, body: RegisterRequest, db: Session = Depends(get_
     capture_admin_registered(email=body.email)
 
     return TokenResponse(
-        access_token=create_access_token(str(user.id), user.role),
-        refresh_token=create_refresh_token(str(user.id), db),
+        access_token=create_access_token(user),
+        refresh_token=create_refresh_token(user, db),
     )
 
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit("10/minute")
 def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == body.email))
+    user = db.scalar(select(User).where(User.email == body.email).with_for_update())
     if user is None:
         dummy_verify_password()
         raise HTTPException(status_code=401, detail="Invalid email or password.")
@@ -136,8 +147,8 @@ def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
     db.commit()
 
     return TokenResponse(
-        access_token=create_access_token(str(user.id), user.role),
-        refresh_token=create_refresh_token(str(user.id), db),
+        access_token=create_access_token(user),
+        refresh_token=create_refresh_token(user, db),
     )
 
 
@@ -152,16 +163,25 @@ def refresh(request: Request, body: RefreshRequest, db: Session = Depends(get_db
     if not jti:
         raise HTTPException(status_code=401, detail="Refresh token is no longer valid.")
 
-    user = db.get(User, payload["sub"])
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found.")
+    user = db.scalar(select(User).where(User.id == uuid.UUID(payload["sub"])).with_for_update())
+    user = verify_token_user(payload, user)
 
     consume_refresh_jti(jti, db)
 
     return TokenResponse(
-        access_token=create_access_token(str(user.id), user.role),
-        refresh_token=create_refresh_token(str(user.id), db),
+        access_token=create_access_token(user),
+        refresh_token=create_refresh_token(user, db),
     )
+
+
+@router.post("/logout", response_model=MessageResponse)
+@limiter.limit("20/minute")
+def logout(request: Request, body: RefreshRequest, db: Session = Depends(get_db)):
+    payload = decode_token(body.refresh_token)
+    if payload.get("type") != "refresh" or not payload.get("jti"):
+        raise HTTPException(status_code=401, detail="Invalid refresh token.")
+    consume_refresh_jti(payload["jti"], db)
+    return MessageResponse(message="Session logged out.")
 
 
 @router.get("/me", response_model=UserResponse)
@@ -202,7 +222,7 @@ def change_password(
 ):
     # require_auth resolves the user in its own short-lived session, so `user` is
     # detached from this request's `db`. Load a session-managed copy to mutate.
-    db_user = db.get(User, user.id)
+    db_user = db.scalar(select(User).where(User.id == user.id).with_for_update())
     if db_user is None or not verify_password(body.current_password, db_user.password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect.")
 
