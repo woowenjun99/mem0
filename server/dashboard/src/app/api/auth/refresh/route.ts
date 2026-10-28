@@ -72,14 +72,23 @@ export async function DELETE() {
   const cookieStore = await cookies();
   const refreshToken = cookieStore.get(COOKIE_NAME)?.value;
   if (refreshToken) {
-    const res = await fetch(`${getServerApiUrl()}${AUTH_ENDPOINTS.LOGOUT}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-    if (!res.ok) {
+    try {
+      const res = await fetch(`${getServerApiUrl()}${AUTH_ENDPOINTS.LOGOUT}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      // An already invalid session needs no further revocation. On outages keep
+      // the cookie so the operator can retry instead of silently abandoning it.
+      if (!res.ok && res.status !== 401) {
+        return NextResponse.json(
+          { error: "Session revocation failed" },
+          { status: 502 },
+        );
+      }
+    } catch {
       return NextResponse.json(
-        { error: "Could not revoke session" },
+        { error: "Session revocation failed" },
         { status: 502 },
       );
     }

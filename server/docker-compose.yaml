@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: server/dev.Dockerfile
     ports:
-      - "8888:8000"
+      - "127.0.0.1:8888:8000"
     env_file:
       - .env
     networks:
@@ -53,7 +53,7 @@ services:
   mem0-dashboard:
     build: ./dashboard
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - mem0_network
     environment:

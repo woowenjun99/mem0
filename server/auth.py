@@ -11,7 +11,7 @@ from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBea
 from jose import JWTError, jwt
 from models import APIKey, RefreshSession, RefreshTokenJti, User
 from passlib.context import CryptContext
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "")
@@ -61,9 +61,38 @@ def _credential_version(user: User) -> str:
 
 
 def verify_token_user(payload: dict, user: User | None) -> User:
-    if user is None or not hmac.compare_digest(payload.get("credential_version", ""), _credential_version(user)):
+    version = payload.get("auth_version")
+    credential = payload.get("credential_version")
+    if (
+        user is None
+        or type(version) is not int
+        or version != user.auth_version
+        or not isinstance(credential, str)
+        or not hmac.compare_digest(credential, _credential_version(user))
+    ):
         raise HTTPException(status_code=401, detail="Session is no longer valid.")
     return user
+
+
+def lock_current_user(user: User, db: Session) -> User:
+    """Serialize credential changes with issuance and recheck detached authentication."""
+    current = db.scalar(select(User).where(User.id == user.id).with_for_update())
+    if current is None or current.auth_version != user.auth_version or current.password_hash != user.password_hash:
+        raise HTTPException(status_code=401, detail="Session is no longer valid.")
+    return current
+
+
+def revoke_user_sessions(user: User, db: Session, *, revoke_api_keys: bool = False) -> None:
+    """Caller holds the user lock and commits the credential change atomically."""
+    user.auth_version += 1
+    db.execute(delete(RefreshTokenJti).where(RefreshTokenJti.user_id == user.id))
+    db.execute(delete(RefreshSession).where(RefreshSession.user_id == user.id))
+    if revoke_api_keys:
+        db.execute(
+            update(APIKey)
+            .where(APIKey.created_by == user.id, APIKey.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
 
 
 def create_access_token(user: User, session_id: uuid.UUID) -> str:
@@ -75,6 +104,7 @@ def create_access_token(user: User, session_id: uuid.UUID) -> str:
         "exp": expire,
         "type": "access",
         "credential_version": _credential_version(user),
+        "auth_version": user.auth_version,
     }
     return jwt.encode(payload, _get_secret(), algorithm=JWT_ALGORITHM)
 
@@ -92,9 +122,9 @@ def create_refresh_token(user: User, db: Session, session: RefreshSession | None
         "jti": str(jti),
         "type": "refresh",
         "credential_version": _credential_version(user),
+        "auth_version": user.auth_version,
     }
     token = jwt.encode(payload, _get_secret(), algorithm=JWT_ALGORITHM)
-    db.commit()
     return token, session.id
 
 
@@ -177,12 +207,17 @@ def _resolve_user_from_api_key(key: str, db: Session) -> User:
     )
 
     for candidate in candidates:
+        # Recovery holds this same owner lock. Reload after acquiring it so an
+        # earlier candidate scan cannot authenticate a key revoked during reset.
+        user = db.scalar(select(User).where(User.id == candidate.created_by).with_for_update())
+        if user is None:
+            continue
+        db.refresh(candidate)
+        if candidate.revoked_at is not None:
+            continue
         if verify_api_key_hash(key, candidate.key_hash):
             candidate.last_used_at = datetime.now(timezone.utc)
             db.commit()
-            user = db.get(User, candidate.created_by)
-            if user is None:
-                raise HTTPException(status_code=401, detail="API key owner not found.")
             return user
 
     raise HTTPException(status_code=401, detail="Invalid API key.")

@@ -1,16 +1,15 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from auth import generate_api_key, require_auth, verify_password
+from auth import generate_api_key, lock_current_user, require_auth, verify_password
 from db import get_db
+from fastapi import APIRouter, Depends, HTTPException, Request
 from models import APIKey, User
+from pydantic import BaseModel
 from rate_limit import limiter
 from schemas import MessageResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
@@ -68,8 +67,8 @@ def create_key(
 ):
     if getattr(request.state, "auth_type", "none") != "bearer":
         raise HTTPException(status_code=403, detail="A password-confirmed session is required.")
-    db_user = db.scalar(select(User).where(User.id == user.id).with_for_update())
-    if db_user is None or not verify_password(body.password, db_user.password_hash):
+    db_user = lock_current_user(user, db)
+    if not verify_password(body.password, db_user.password_hash):
         raise HTTPException(status_code=403, detail="Password is incorrect.")
     full_key, prefix, key_hash = generate_api_key()
     api_key = APIKey(key_prefix=prefix, key_hash=key_hash, label=body.label, created_by=user.id)
@@ -88,6 +87,7 @@ def create_key(
 
 @router.delete("/{key_id}", response_model=MessageResponse)
 def revoke_key(key_id: str, user: User = Depends(require_auth), db: Session = Depends(get_db)):
+    user = lock_current_user(user, db)
     try:
         key_uuid = uuid.UUID(key_id)
     except (TypeError, ValueError):

@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import telemetry
-from auth import ADMIN_API_KEY, AUTH_DISABLED, JWT_SECRET, require_admin, verify_auth
+from auth import ADMIN_API_KEY, AUTH_DISABLED, JWT_SECRET, require_admin
 from db import SessionLocal
 from dotenv import load_dotenv
 from errors import (
@@ -320,12 +320,12 @@ async def log_requests(request: Request, call_next):
 
 
 @app.get("/configure", summary="Get current Mem0 configuration")
-def get_config(_auth=Depends(verify_auth)):
+def get_config(_auth=Depends(require_admin)):
     return _redact_config(get_current_config())
 
 
 @app.get("/configure/providers", summary="List bundled LLM and embedder providers")
-def list_bundled_providers(_auth=Depends(verify_auth)):
+def list_bundled_providers(_auth=Depends(require_admin)):
     return {"llm": list(BUNDLED_LLM_PROVIDERS), "embedder": list(BUNDLED_EMBEDDER_PROVIDERS)}
 
 
@@ -338,7 +338,7 @@ def set_config(config: Dict[str, Any], _auth=Depends(require_admin)):
 
 
 @app.post("/generate-instructions", summary="Generate custom instructions from a use case")
-def generate_instructions(req: GenerateInstructionsRequest, _auth=Depends(verify_auth)):
+def generate_instructions(req: GenerateInstructionsRequest, _auth=Depends(require_admin)):
     """Generate custom instructions and a contextual test message tailored to a use case."""
     try:
         llm = get_memory_instance().llm
@@ -365,7 +365,7 @@ def generate_instructions(req: GenerateInstructionsRequest, _auth=Depends(verify
 
 
 @app.post("/memories", summary="Create memories")
-def add_memory(memory_create: MemoryCreate, _auth=Depends(verify_auth)):
+def add_memory(memory_create: MemoryCreate, _auth=Depends(require_admin)):
     """Store new memories."""
     if not any([memory_create.user_id, memory_create.agent_id, memory_create.run_id]):
         raise HTTPException(status_code=400, detail="At least one identifier (user_id, agent_id, run_id) is required.")
@@ -383,7 +383,16 @@ def add_memory(memory_create: MemoryCreate, _auth=Depends(verify_auth)):
 
 
 ALL_MEMORIES_LIMIT = 1000
-_RESERVED_PAYLOAD_KEYS = {"data", "user_id", "agent_id", "run_id", "hash", "created_at", "updated_at", "expiration_date"}
+_RESERVED_PAYLOAD_KEYS = {
+    "data",
+    "user_id",
+    "agent_id",
+    "run_id",
+    "hash",
+    "created_at",
+    "updated_at",
+    "expiration_date",
+}
 
 
 def _serialize_memory(row: Any) -> Dict[str, Any]:
@@ -416,7 +425,7 @@ def get_all_memories(
     agent_id: Optional[str] = None,
     top_k: Optional[int] = Query(None, ge=0, le=ALL_MEMORIES_LIMIT),
     show_expired: bool = Query(False),
-    _auth=Depends(verify_auth),
+    _auth=Depends(require_admin),
 ):
     """Retrieve stored memories. Lists all memories when no identifier is provided (admin only)."""
     try:
@@ -426,9 +435,7 @@ def get_all_memories(
                 raise HTTPException(status_code=403, detail="Admin role required to list all memories.")
             # Admin all-memory listing is intentionally raw; scoped get_all below applies expiry visibility.
             return _list_all_memories(limit=top_k if top_k is not None else ALL_MEMORIES_LIMIT)
-        filters = {
-            k: v for k, v in {"user_id": user_id, "run_id": run_id, "agent_id": agent_id}.items() if v
-        }
+        filters = {k: v for k, v in {"user_id": user_id, "run_id": run_id, "agent_id": agent_id}.items() if v}
         params = {"filters": filters}
         if top_k is not None:
             params["top_k"] = top_k
@@ -441,7 +448,7 @@ def get_all_memories(
 
 
 @app.get("/memories/{memory_id}", summary="Get a memory")
-def get_memory(memory_id: str, _auth=Depends(verify_auth)):
+def get_memory(memory_id: str, _auth=Depends(require_admin)):
     """Retrieve a specific memory by ID."""
     try:
         return get_memory_instance().get(memory_id)
@@ -450,7 +457,7 @@ def get_memory(memory_id: str, _auth=Depends(verify_auth)):
 
 
 @app.post("/search", summary="Search memories")
-def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
+def search_memories(search_req: SearchRequest, _auth=Depends(require_admin)):
     """Search for memories based on a query."""
     try:
         filters = search_req.filters or {}
@@ -485,7 +492,7 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
 
 
 @app.put("/memories/{memory_id}", summary="Update a memory")
-def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(verify_auth)):
+def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(require_admin)):
     """Update an existing memory."""
     try:
         fields_set = getattr(updated_memory, "model_fields_set", getattr(updated_memory, "__fields_set__", set()))
@@ -504,7 +511,7 @@ def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(ve
 
 
 @app.get("/memories/{memory_id}/history", summary="Get memory history")
-def memory_history(memory_id: str, _auth=Depends(verify_auth)):
+def memory_history(memory_id: str, _auth=Depends(require_admin)):
     """Retrieve memory history."""
     try:
         return get_memory_instance().history(memory_id=memory_id)
@@ -513,7 +520,7 @@ def memory_history(memory_id: str, _auth=Depends(verify_auth)):
 
 
 @app.delete("/memories/{memory_id}", summary="Delete a memory", response_model=MessageResponse)
-def delete_memory(memory_id: str, _auth=Depends(verify_auth)):
+def delete_memory(memory_id: str, _auth=Depends(require_admin)):
     """Delete a specific memory by ID."""
     try:
         get_memory_instance().delete(memory_id=memory_id)
@@ -535,9 +542,7 @@ def delete_all_memories(
     if not any([user_id, run_id, agent_id]):
         raise HTTPException(status_code=400, detail="At least one identifier is required.")
     try:
-        params = {
-            k: v for k, v in {"user_id": user_id, "run_id": run_id, "agent_id": agent_id}.items() if v
-        }
+        params = {k: v for k, v in {"user_id": user_id, "run_id": run_id, "agent_id": agent_id}.items() if v}
         get_memory_instance().delete_all(**params)
         return MessageResponse(message="All relevant memories deleted")
     except Exception:

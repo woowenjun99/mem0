@@ -10,8 +10,8 @@ import {
 import {
   api,
   refreshAccessToken,
+  revokeSession,
   setAccessToken,
-  withSessionLock,
 } from "@/utils/api";
 import { AUTH_ENDPOINTS } from "@/utils/api-endpoints";
 
@@ -54,13 +54,6 @@ async function storeRefreshToken(refreshToken: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refresh_token: refreshToken }),
   });
-}
-
-async function clearRefreshToken() {
-  const response = await withSessionLock(() =>
-    fetch("/api/auth/refresh", { method: "DELETE" }),
-  );
-  if (!response.ok) throw new Error("Could not revoke session.");
 }
 
 async function refreshSession(): Promise<boolean> {
@@ -127,8 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    await clearRefreshToken();
-    setAccessToken(null);
+    await revokeSession();
     setUser(null);
     if (typeof window !== "undefined") window.location.href = "/login";
   }, []);

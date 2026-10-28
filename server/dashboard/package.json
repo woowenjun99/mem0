@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.34.2",
   "scripts": {
     "dev": "next dev",
+    "test": "bun test tests ../tests/session-refresh.test.ts",
     "build": "next build",
     "start": "next start",
     "lint": "prettier --check .",

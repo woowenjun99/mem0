@@ -2,13 +2,11 @@
 
 import os
 import sys
-from datetime import datetime, timezone
 
-from sqlalchemy import select, update
-
-from auth import hash_password
+from auth import hash_password, revoke_user_sessions
 from db import SessionLocal
-from models import APIKey, User
+from models import User
+from sqlalchemy import select
 
 MIN_PASSWORD_LENGTH = 8
 
@@ -32,11 +30,7 @@ def main() -> int:
             return 1
 
         user.password_hash = hash_password(password)
-        db.execute(
-            update(APIKey)
-            .where(APIKey.created_by == user.id, APIKey.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(timezone.utc))
-        )
+        revoke_user_sessions(user, db, revoke_api_keys=True)
         db.commit()
 
     print(f"Password reset for {email}.")

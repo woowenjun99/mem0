@@ -134,7 +134,7 @@ export default function NavWrapper() {
                     className="typo-body-sm text-onSurface-default-primary hover:bg-surface-default-tertiary-hover focus:bg-surface-default-tertiary-hover cursor-pointer"
                   >
                     <LogOut className="size-4 mr-2" />
-                    Log out
+                    Sign out all sessions
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

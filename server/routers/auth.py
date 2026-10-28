@@ -3,28 +3,28 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, EmailStr
-from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
 from auth import (
-    rotate_refresh_token,
-    revoke_refresh_session,
     create_access_token,
     create_refresh_token,
     decode_token,
     dummy_verify_password,
     hash_password,
+    lock_current_user,
     require_auth,
+    revoke_user_sessions,
+    rotate_refresh_token,
     verify_password,
     verify_token_user,
 )
 from db import get_db
-from models import APIKey, User
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from models import User
+from pydantic import BaseModel, EmailStr
 from rate_limit import limiter
 from schemas import MessageResponse
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from telemetry import capture_admin_registered, capture_onboarding_completed
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -73,6 +73,13 @@ class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+
+def _issue_tokens(user: User, db: Session, rotated: tuple[str, uuid.UUID] | None = None) -> TokenResponse:
+    refresh_token, session_id = rotated if rotated is not None else create_refresh_token(user, db)
+    response = TokenResponse(access_token=create_access_token(user, session_id), refresh_token=refresh_token)
+    db.commit()
+    return response
 
 
 class UserResponse(BaseModel):
@@ -128,8 +135,7 @@ def register(
 
     capture_admin_registered(email=body.email)
 
-    refresh_token, session_id = create_refresh_token(user, db)
-    return TokenResponse(access_token=create_access_token(user, session_id), refresh_token=refresh_token)
+    return _issue_tokens(user, db)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -143,10 +149,7 @@ def login(request: Request, body: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid email or password.")
 
     user.last_login_at = datetime.now(timezone.utc)
-    db.commit()
-
-    refresh_token, session_id = create_refresh_token(user, db)
-    return TokenResponse(access_token=create_access_token(user, session_id), refresh_token=refresh_token)
+    return _issue_tokens(user, db)
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -163,8 +166,7 @@ def refresh(request: Request, body: RefreshRequest, db: Session = Depends(get_db
     user = db.scalar(select(User).where(User.id == uuid.UUID(payload["sub"])).with_for_update())
     user = verify_token_user(payload, user)
 
-    refresh_token, session_id = rotate_refresh_token(jti, user, db)
-    return TokenResponse(access_token=create_access_token(user, session_id), refresh_token=refresh_token)
+    return _issue_tokens(user, db, rotate_refresh_token(jti, user, db))
 
 
 @router.post("/logout", response_model=MessageResponse)
@@ -173,8 +175,13 @@ def logout(request: Request, body: RefreshRequest, db: Session = Depends(get_db)
     payload = decode_token(body.refresh_token)
     if payload.get("type") != "refresh" or not payload.get("jti"):
         raise HTTPException(status_code=401, detail="Invalid refresh token.")
-    revoke_refresh_session(payload["jti"], db)
-    return MessageResponse(message="Session logged out.")
+    user = db.scalar(select(User).where(User.id == uuid.UUID(payload["sub"])).with_for_update())
+    user = verify_token_user(payload, user)
+    # A rotated token may still authorize global logout for its current version.
+    # An older version cannot revoke a subsequent login.
+    revoke_user_sessions(user, db)
+    db.commit()
+    return MessageResponse(message="All browser sessions signed out.")
 
 
 @router.get("/me", response_model=UserResponse)
@@ -190,9 +197,7 @@ def update_me(
 ):
     # require_auth resolves the user in its own short-lived session, so `user` is
     # detached from this request's `db`. Load a session-managed copy to mutate.
-    db_user = db.get(User, user.id)
-    if db_user is None:
-        raise HTTPException(status_code=404, detail="User not found.")
+    db_user = lock_current_user(user, db)
 
     if body.name is not None and body.name.strip():
         db_user.name = body.name.strip()
@@ -215,18 +220,14 @@ def change_password(
 ):
     # require_auth resolves the user in its own short-lived session, so `user` is
     # detached from this request's `db`. Load a session-managed copy to mutate.
-    db_user = db.scalar(select(User).where(User.id == user.id).with_for_update())
-    if db_user is None or not verify_password(body.current_password, db_user.password_hash):
+    db_user = lock_current_user(user, db)
+    if not verify_password(body.current_password, db_user.password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect.")
 
     _require_password_length(body.new_password)
 
     db_user.password_hash = hash_password(body.new_password)
-    db.execute(
-        update(APIKey)
-        .where(APIKey.created_by == db_user.id, APIKey.revoked_at.is_(None))
-        .values(revoked_at=datetime.now(timezone.utc))
-    )
+    revoke_user_sessions(db_user, db, revoke_api_keys=True)
     db.commit()
     return MessageResponse(message="Password updated.")
 

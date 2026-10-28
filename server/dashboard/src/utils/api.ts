@@ -1,6 +1,7 @@
 import axios, { AxiosError, AxiosInstance } from "axios";
 
 let cachedToken: string | null = null;
+let revokingSession = false;
 const LOGIN_PATH = "/login";
 
 export const setAccessToken = (token: string | null) => {
@@ -49,17 +50,34 @@ async function performRefresh() {
   }
 
   const data = await refreshResponse.json();
+  if (revokingSession) return null;
   setAccessToken(data.access_token);
   return data.access_token as string;
 }
 
 export function refreshAccessToken(): Promise<string | null> {
+  if (revokingSession) return Promise.resolve(null);
   if (!refreshPromise) {
     refreshPromise = withSessionLock(performRefresh).finally(() => {
       refreshPromise = null;
     });
   }
   return refreshPromise;
+}
+
+export async function revokeSession() {
+  revokingSession = true;
+  try {
+    await refreshPromise?.catch(() => null);
+    const response = await withSessionLock(() =>
+      fetch("/api/auth/refresh", { method: "DELETE" }),
+    );
+    if (!response.ok)
+      throw new Error("Could not revoke sessions. Please retry signing out.");
+    setAccessToken(null);
+  } finally {
+    revokingSession = false;
+  }
 }
 
 const createApi = (): AxiosInstance & {

@@ -73,10 +73,31 @@ Then open `http://localhost:3000` and complete the setup wizard using the bootst
 ## Security Defaults
 
 - Dashboard login uses JWTs. Migration 007 signs out existing JWT sessions; API keys remain valid until revoked or the password changes.
-- Logging out revokes the refresh-token family and its access tokens.
+- Logging out revokes all browser sessions and their access tokens. API keys
+  remain active until explicitly revoked or the password is changed/reset.
 - Programmatic access uses `X-API-Key`.
 - Auth is enabled by default.
 - `AUTH_DISABLED=true` exists for local development only and should not be used in production.
+
+Migration `008` adds an account authentication version on top of the existing
+refresh-session families from migration `007`. Run migrations before starting
+the updated API. Existing browser sessions are invalidated; sign in again after
+upgrading. Password changes/resets revoke browser sessions and account-owned API
+keys atomically. The independent legacy `ADMIN_API_KEY` must be rotated separately.
+
+Shared memory CRUD, history, search, entity listing, configuration, and instruction
+generation require administrator privileges. `user_id`, `agent_id`, and `run_id`
+are application filters, not tenant access controls. Administrator keys are
+privileged service credentials: keep them on your application backend and enforce
+end-user ownership there. Reference Compose ports bind to loopback; use an HTTPS
+reverse proxy for remote access.
+
+Security regressions use an isolated PostgreSQL schema per test. Set
+`TEST_SERVER_DATABASE_URL` to a disposable `postgresql+psycopg://...` database
+and run `python -m pytest tests/test_server_security.py`. Existing deployment
+checks are in `server/tests/test_auth_security.py` and
+`tests/llms/test_openai_gpt6.py`. Run dashboard checks with `bun run test`,
+`bun run typecheck`, and `bun run build` from `server/dashboard`.
 
 ## Forgotten password
 

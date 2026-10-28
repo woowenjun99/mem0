@@ -186,6 +186,16 @@ curl -X POST http://localhost:8888/memories \
 
 Per-user keys inherit the creating user's scope. List or revoke them via `GET /api-keys` and `DELETE /api-keys/{id}`.
 
+Shared memory CRUD, search, history, entity listing, configuration, and instruction
+generation require administrator privileges; non-admin credentials return 403.
+Memory identifiers are application filters, not tenant access controls.
+
+`POST /auth/logout` revokes all browser sessions, including their access tokens,
+and accepts a signed refresh token from the current account authentication version
+even if another tab already rotated it. Password changes and resets also revoke
+account API keys. Existing refresh-session families and replay detection remain
+in use. Migration `008` invalidates pre-upgrade browser sessions; sign in again.
+
 ### Legacy `ADMIN_API_KEY`
 
 Set the `ADMIN_API_KEY` environment variable and send it as `X-API-Key`. The request is treated as admin-level and is not tied to a dashboard user. This mode is kept for back-compat with older self-hosted deployments: prefer JWT or per-user keys for new setups.

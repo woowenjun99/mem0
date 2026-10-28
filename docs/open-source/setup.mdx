@@ -61,6 +61,11 @@ make up
 
 This starts the containers and runs database migrations. The REST API listens on `http://localhost:8888` and the dashboard on `http://localhost:3000`.
 
+Reference ports bind to loopback. Use an HTTPS reverse proxy for remote access.
+This is a single-administrator service: memory identifiers are application filters,
+not tenant authorization. Keep administrator API keys on an application backend
+that enforces ownership for untrusted end users.
+
 Open `http://localhost:3000`. Since no admin account exists yet, the dashboard redirects to the one-time setup wizard at `/setup`. See [Run the setup wizard](#run-the-setup-wizard) below.
 
 ### Agent-first (command line)
